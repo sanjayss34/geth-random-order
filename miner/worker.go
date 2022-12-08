@@ -1221,7 +1221,8 @@ func (w *worker) generateWork(params *generateParams) (*types.Block, error) {
 			log.Warn("Block building is interrupted", "allowance", common.PrettyDuration(w.newpayloadTimeout))
 		}
 	}
-	return w.engine.FinalizeAndAssemble(w.chain, work.header, work.state, work.txs, work.unclelist(), work.receipts)
+	return types.NewBlock(work.header, work.txs, work.unclelist(), work.receipts, trie.NewStackTrie(nil)), nil
+	//return w.engine.FinalizeAndAssemble(w.chain, work.header, work.state, work.txs, work.unclelist(), work.receipts)
 }
 
 // commitWork generates several new sealing tasks based on the parent block
