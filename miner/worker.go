@@ -23,8 +23,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-    "sort"
-    "encoding/binary"
 
 	mapset "github.com/deckarep/golang-set"
 	"github.com/ethereum/go-ethereum/common"
@@ -36,7 +34,6 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/trie"
 )
 
@@ -156,9 +153,6 @@ type task struct {
 	state     *state.StateDB
 	block     *types.Block
 	createdAt time.Time
-    coinbase common.Address
-    header *types.Header
-    gasPool *core.GasPool
 }
 
 const (
@@ -556,11 +550,9 @@ func (w *worker) mainLoop() {
 	for {
 		select {
 		case req := <-w.newWorkCh:
-            log.Debug("going to commitWork")
 			w.commitWork(req.interrupt, req.noempty, req.timestamp)
 
 		case req := <-w.getWorkCh:
-            log.Debug("going to generateWork")
 			block, err := w.generateWork(req.params)
 			if err != nil {
 				req.err <- err
@@ -716,80 +708,31 @@ func (w *worker) resultLoop() {
 			if block == nil {
 				continue
 			}
-
-			var sealhash = w.engine.SealHash(block.Header())
+			// Short circuit when receiving duplicate result caused by resubmitting.
+			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
+				continue
+			}
+			var (
+				sealhash = w.engine.SealHash(block.Header())
+				hash     = block.Hash()
+			)
 			w.pendingMu.RLock()
 			task, exist := w.pendingTasks[sealhash]
 			w.pendingMu.RUnlock()
 			if !exist {
-				log.Error("Block found but no relative pending task", "number", block.Number(), "sealhash", sealhash)
+				log.Error("Block found but no relative pending task", "number", block.Number(), "sealhash", sealhash, "hash", hash)
 				continue
 			}
-			
-
-			numTransactions := uint64(0)
-            for range block.Transactions() {
-                numTransactions = numTransactions+1
-            }
-			// Execute Transactions for real
-			var (
-				receipts = make([]*types.Receipt, numTransactions)
-				logs     []*types.Log
-			)
-            log.Debug("taskLoop", "numTransactions", numTransactions, "sealHash", sealhash)
-            transactionsByHash := make(types.TxByHash, numTransactions)
-            for i, tx := range block.Transactions() {
-                transactionsByHash[i] = tx
-            }
-            sort.Sort(transactionsByHash)
-            permutation := make([]int, numTransactions)
-            randomBytes := make([]byte, numTransactions)
-            for i := range permutation {
-                permutation[i] = i
-                randomBytes[i] = 1
-            }
-            nonceBytes := make([]byte, 8)
-            binary.BigEndian.PutUint64(nonceBytes, block.Nonce())
-            randomBytes = crypto.Keccak512(nonceBytes)
-            for i := range permutation {
-                randomNum := binary.BigEndian.Uint64(randomBytes) % numTransactions
-                permutation[i], permutation[randomNum] = permutation[randomNum], permutation[i]
-                randomBytes = crypto.Keccak512(randomBytes)
-            }
-            transactions := make([]types.Transaction, numTransactions)
-            // txNonces := make([]uint64, numTransactions)
-            for i, tx := range block.Transactions() {
-                // Keep original ordering
-                transactions[i] = *tx
-                // Random ordering
-                // transactions[permutation[i]] = *transactionsByHash[i]
-                // txNonces[i] = tx.nonce()
-            }
-            // statedb := task.state
 			// Different block could share same sealhash, deep copy here to prevent write-write conflict.
 			var (
-				receipts = make([]*types.Receipt, numTransactions)
+				receipts = make([]*types.Receipt, len(task.receipts))
 				logs     []*types.Log
 			)
-            // for i, tx1 := range transactions {
-            for i, taskReceipt := range task.receipts {
-                // tx := &tx1
-                /*statedb.Prepare(tx.Hash(), i)
-                snap := statedb.Snapshot()
-                taskReceipt, err := core.ApplyTransaction(w.chainConfig, w.chain, &task.coinbase, task.gasPool, statedb, task.header, tx, &task.header.GasUsed, *w.chain.GetVMConfig())
-                if err != nil {
-                    log.Debug("Error occurred during ApplyTransaction", "err", err)
-                    task.state.RevertToSnapshot(snap)
-                    receipts[i] = nil
-                    logs = append(logs, nil)
-                }
-                log.Debug("Executed transaction", "txId", i)*/
+			for i, taskReceipt := range task.receipts {
 				receipt := new(types.Receipt)
 				receipts[i] = receipt
 				*receipt = *taskReceipt
 
-			// Different block could share same sealhash, deep copy here to prevent write-write conflict.
-            for i, receipt := range receipts {
 				// add block location fields
 				receipt.BlockHash = hash
 				receipt.BlockNumber = block.Number()
@@ -797,16 +740,22 @@ func (w *worker) resultLoop() {
 
 				// Update the block hash in all logs since it is now available and not when the
 				// receipt/log of individual transactions were created.
+				receipt.Logs = make([]*types.Log, len(taskReceipt.Logs))
+				for i, taskLog := range taskReceipt.Logs {
+					log := new(types.Log)
+					receipt.Logs[i] = log
+					*log = *taskLog
+					log.BlockHash = hash
+				}
 				logs = append(logs, receipt.Logs...)
 			}
-            log.Debug("block root", "root", block.Root())
 			// Commit block and state to database.
-			_, err = w.chain.WriteBlockAndSetHead(block, receipts, logs, task.state, true)
+			_, err := w.chain.WriteBlockAndSetHead(block, receipts, logs, task.state, true)
 			if err != nil {
 				log.Error("Failed writing block to chain", "err", err)
 				continue
 			}
-			log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash, "sealhash2", w.engine.SealHash(block.Header()), "hash2", block.Hash(),
+			log.Info("Successfully sealed new block", "number", block.Number(), "sealhash", sealhash, "hash", hash,
 				"elapsed", common.PrettyDuration(time.Since(task.createdAt)))
 
 			// Broadcast the block and announce chain insertion event
@@ -814,8 +763,6 @@ func (w *worker) resultLoop() {
 
 			// Insert the block into the set of pending ones to resultLoop for confirmations
 			w.unconfirmed.Insert(block.NumberU64(), block.Hash())
-
-            log.Debug("End of resultLoop iteration")
 
 		case <-w.exitCh:
 			return
@@ -827,7 +774,6 @@ func (w *worker) resultLoop() {
 func (w *worker) makeEnv(parent *types.Block, header *types.Header, coinbase common.Address) (*environment, error) {
 	// Retrieve the parent state to execute on top and start a prefetcher for
 	// the miner to speed block sealing up a bit.
-    log.Debug("Parent hash", "hash", parent.Hash(), "root", parent.Root())
 	state, err := w.chain.StateAt(parent.Root())
 	if err != nil {
 		return nil, err
@@ -1001,77 +947,6 @@ func (w *worker) commitTransactions(env *environment, txs *types.TransactionsByP
 	return nil
 }
 
-func (w *worker) commitTransactionsNew(env *environment, txs *types.TransactionsByPriceAndNonce, interrupt *int32) error {
-    gasLimit := env.header.GasLimit
-	if env.gasPool == nil {
-		env.gasPool = new(core.GasPool).AddGas(gasLimit)
-	}
-	var coalescedLogs []*types.Log
-
-    var remainingGas = gasLimit
-	for {
-		// Check interruption signal and abort building if it's fired.
-		if interrupt != nil {
-			if signal := atomic.LoadInt32(interrupt); signal != commitInterruptNone {
-				return signalToErr(signal)
-			}
-		}
-		// If we don't have enough gas for any further transactions then we're done.
-		if remainingGas < params.TxGas {
-			log.Trace("Not enough gas for further transactions", "have", remainingGas, "want", params.TxGas)
-			break
-		}
-		// Retrieve the next transaction and abort if all done.
-		tx := txs.Peek()
-		if tx == nil {
-			break
-		}
-		// Error may be ignored here. The error has already been checked
-		// during transaction acceptance is the transaction pool.
-		from, _ := types.Sender(env.signer, tx)
-
-		// Check whether the tx is replay protected. If we're not in the EIP155 hf
-		// phase, start ignoring the sender until we do.
-		if tx.Protected() && !w.chainConfig.IsEIP155(env.header.Number) {
-			log.Trace("Ignoring reply protected transaction", "hash", tx.Hash(), "eip155", w.chainConfig.EIP155Block)
-
-			txs.Pop()
-			continue
-		}
-
-        if remainingGas < tx.Gas() {
-            log.Trace("Gas limit exceeded for current block (based on max gas)", "sender", from)
-            txs.Pop()
-            continue
-        }
-        env.txs = append(env.txs, tx)
-        remainingGas = remainingGas - tx.Gas()
-        env.tcount++
-        txs.Shift()
-		// Start executing the transaction
-		// env.state.Prepare(tx.Hash(), env.tcount)
-
-		// logs, err := w.commitTransaction(env, tx)
-	}
-	if !w.isRunning() && len(coalescedLogs) > 0 {
-		// We don't push the pendingLogsEvent while we are sealing. The reason is that
-		// when we are sealing, the worker will regenerate a sealing block every 3 seconds.
-		// In order to avoid pushing the repeated pendingLog, we disable the pending log pushing.
-
-		// make a copy, the state caches the logs and these logs get "upgraded" from pending to mined
-		// logs by filling in the block hash when the block was mined by the local miner. This can
-		// cause a race condition if a log was "upgraded" before the PendingLogsEvent is processed.
-		cpy := make([]*types.Log, len(coalescedLogs))
-		for i, l := range coalescedLogs {
-			cpy[i] = new(types.Log)
-			*cpy[i] = *l
-		}
-		w.pendingLogsFeed.Send(cpy)
-	}
-    log.Debug("commitTransactionsNew finished", "txCount", env.tcount)
-	return nil
-}
-
 // generateParams wraps various of settings for generating sealing task.
 type generateParams struct {
 	timestamp  uint64         // The timstamp for sealing task
@@ -1137,7 +1012,6 @@ func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
 		log.Error("Failed to prepare header for sealing", "err", err)
 		return nil, err
 	}
-    log.Debug("Root hash in prepareWork", "hash", parent.Root())
 	// Could potentially happen if starting to mine in an odd state.
 	// Note genParams.coinbase can be different with header.Coinbase
 	// since clique algorithm can modify the coinbase field in header.
@@ -1298,19 +1172,13 @@ func (w *worker) commit(env *environment, interval func(), update bool, start ti
 		// https://github.com/ethereum/go-ethereum/issues/24299
 		env := env.copy()
 		block, err := w.engine.FinalizeAndAssemble(w.chain, env.header, env.state, env.txs, env.unclelist(), env.receipts)
-        log.Debug("hashes in commit()", "hash", block.Hash(), "Root", block.Root())
 		if err != nil {
 			return err
 		}
-        numTx := 0
-        for i, _ := range block.Transactions() {
-            numTx = numTx + ((i+1)/(i+1))
-        }
-        log.Debug("commit after FinalizeAndAssemble", "txCount", env.tcount, "blockTxCount", numTx)
 		// If we're post merge, just ignore
 		if !w.isTTDReached(block.Header()) {
 			select {
-            case w.taskCh <- &task{receipts: env.receipts, state: env.state, block: block, createdAt: time.Now(), coinbase: env.coinbase, header: env.header, gasPool: env.gasPool}:
+			case w.taskCh <- &task{receipts: env.receipts, state: env.state, block: block, createdAt: time.Now()}:
 				w.unconfirmed.Shift(block.NumberU64() - 1)
 				log.Info("Commit new sealing work", "number", block.Number(), "sealhash", w.engine.SealHash(block.Header()),
 					"uncles", len(env.uncles), "txs", env.tcount,
@@ -1386,9 +1254,9 @@ func (w *worker) postSideBlock(event core.ChainSideEvent) {
 // totalFees computes total consumed miner fees in ETH. Block transactions and receipts have to have the same order.
 func totalFees(block *types.Block, receipts []*types.Receipt) *big.Float {
 	feesWei := new(big.Int)
-	for _, tx := range block.Transactions() {
+	for i, tx := range block.Transactions() {
 		minerFee, _ := tx.EffectiveGasTip(block.BaseFee())
-		feesWei.Add(feesWei, new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), minerFee))
+		feesWei.Add(feesWei, new(big.Int).Mul(new(big.Int).SetUint64(receipts[i].GasUsed), minerFee))
 	}
 	return new(big.Float).Quo(new(big.Float).SetInt(feesWei), new(big.Float).SetInt(big.NewInt(params.Ether)))
 }
