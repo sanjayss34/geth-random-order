@@ -624,7 +624,7 @@ func (w *worker) mainLoop() {
 				}
 				txset := types.NewTransactionsByPriceAndNonce(w.current.signer, txs, w.current.header.BaseFee)
 				tcount := w.current.tcount
-				w.commitTransactionsNew(w.current, txset, nil)
+				w.commitTransactions(w.current, txset, nil)
 
 				// Only update the snapshot if any new transactions were added
 				// to the pending block
@@ -758,45 +758,35 @@ func (w *worker) resultLoop() {
             }
             transactions := make([]types.Transaction, numTransactions)
             // txNonces := make([]uint64, numTransactions)
-            for i, _ := range block.Transactions() {
+            for i, tx := range block.Transactions() {
                 // Keep original ordering
-                // transactions[i] = *tx
+                transactions[i] = *tx
                 // Random ordering
-                transactions[permutation[i]] = *transactionsByHash[i]
+                // transactions[permutation[i]] = *transactionsByHash[i]
                 // txNonces[i] = tx.nonce()
             }
-
-			// var coalescedLogs []*types.Log
-
-			for i, tx1 := range transactions {
-				// Start executing the transactio        
-				tx := &tx1
-                task.state.Prepare(tx.Hash(), i)
-                snap := task.state.Snapshot()
-                _, err := core.ApplyTransaction(w.chainConfig, w.chain, &task.coinbase, task.gasPool, task.state, task.header, tx, &task.header.GasUsed, *w.chain.GetVMConfig())
+            // statedb := task.state
+			// Different block could share same sealhash, deep copy here to prevent write-write conflict.
+			var (
+				receipts = make([]*types.Receipt, numTransactions)
+				logs     []*types.Log
+			)
+            // for i, tx1 := range transactions {
+            for i, taskReceipt := range task.receipts {
+                // tx := &tx1
+                /*statedb.Prepare(tx.Hash(), i)
+                snap := statedb.Snapshot()
+                taskReceipt, err := core.ApplyTransaction(w.chainConfig, w.chain, &task.coinbase, task.gasPool, statedb, task.header, tx, &task.header.GasUsed, *w.chain.GetVMConfig())
                 if err != nil {
                     log.Debug("Error occurred during ApplyTransaction", "err", err)
                     task.state.RevertToSnapshot(snap)
                     receipts[i] = nil
                     logs = append(logs, nil)
                 }
-                log.Debug("Executed transaction", "txId", i)
-            }		
-
-            // statedb := task.state
-
-			block, err := w.engine.FinalizeAndAssemble(w.chain, block.Header(), task.state, block.Transactions(), block.Uncles(), receipts)
-			if err != nil {
-				log.Debug("Error occurred during FinalizeAndAssemble", "err", err)
-				continue
-			}	
-
-			// Short circuit when receiving duplicate result caused by resubmitting.
-			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
-				continue
-			}
-
-			var hash     = block.Hash()
+                log.Debug("Executed transaction", "txId", i)*/
+				receipt := new(types.Receipt)
+				receipts[i] = receipt
+				*receipt = *taskReceipt
 
 			// Different block could share same sealhash, deep copy here to prevent write-write conflict.
             for i, receipt := range receipts {
@@ -809,6 +799,7 @@ func (w *worker) resultLoop() {
 				// receipt/log of individual transactions were created.
 				logs = append(logs, receipt.Logs...)
 			}
+            log.Debug("block root", "root", block.Root())
 			// Commit block and state to database.
 			_, err = w.chain.WriteBlockAndSetHead(block, receipts, logs, task.state, true)
 			if err != nil {
@@ -836,7 +827,7 @@ func (w *worker) resultLoop() {
 func (w *worker) makeEnv(parent *types.Block, header *types.Header, coinbase common.Address) (*environment, error) {
 	// Retrieve the parent state to execute on top and start a prefetcher for
 	// the miner to speed block sealing up a bit.
-    log.Debug("Parent hash", "hash", parent.Hash(), parent.Transactions())
+    log.Debug("Parent hash", "hash", parent.Hash(), "root", parent.Root())
 	state, err := w.chain.StateAt(parent.Root())
 	if err != nil {
 		return nil, err
@@ -1146,7 +1137,7 @@ func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
 		log.Error("Failed to prepare header for sealing", "err", err)
 		return nil, err
 	}
-    log.Debug("Root hash", "hash", parent.Root())
+    log.Debug("Root hash in prepareWork", "hash", parent.Root())
 	// Could potentially happen if starting to mine in an odd state.
 	// Note genParams.coinbase can be different with header.Coinbase
 	// since clique algorithm can modify the coinbase field in header.
@@ -1192,13 +1183,13 @@ func (w *worker) fillTransactions(interrupt *int32, env *environment) error {
 	}
 	if len(localTxs) > 0 {
 		txs := types.NewTransactionsByPriceAndNonce(env.signer, localTxs, env.header.BaseFee)
-		if err := w.commitTransactionsNew(env, txs, interrupt); err != nil {
+		if err := w.commitTransactions(env, txs, interrupt); err != nil {
 			return err
 		}
 	}
 	if len(remoteTxs) > 0 {
 		txs := types.NewTransactionsByPriceAndNonce(env.signer, remoteTxs, env.header.BaseFee)
-		if err := w.commitTransactionsNew(env, txs, interrupt); err != nil {
+		if err := w.commitTransactions(env, txs, interrupt); err != nil {
 			return err
 		}
 	}
@@ -1306,12 +1297,11 @@ func (w *worker) commit(env *environment, interval func(), update bool, start ti
 		// Create a local environment copy, avoid the data race with snapshot state.
 		// https://github.com/ethereum/go-ethereum/issues/24299
 		env := env.copy()
-		// Finalize later
-		// block, err := w.engine.FinalizeAndAssemble(w.chain, env.header, env.state, env.txs, env.unclelist(), env.receipts)
-        block := types.NewBlock(env.header, env.txs, env.unclelist(), env.receipts, trie.NewStackTrie(nil))
-		// if err != nil {
-		//	return err
-		//}
+		block, err := w.engine.FinalizeAndAssemble(w.chain, env.header, env.state, env.txs, env.unclelist(), env.receipts)
+        log.Debug("hashes in commit()", "hash", block.Hash(), "Root", block.Root())
+		if err != nil {
+			return err
+		}
         numTx := 0
         for i, _ := range block.Transactions() {
             numTx = numTx + ((i+1)/(i+1))
