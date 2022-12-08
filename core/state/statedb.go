@@ -130,6 +130,7 @@ type StateDB struct {
 
 // New creates a new state from a given trie.
 func New(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) {
+    log.Debug("root hash", "hash", root)
 	tr, err := db.OpenTrie(root)
 	if err != nil {
 		return nil, err

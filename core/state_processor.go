@@ -19,6 +19,9 @@ package core
 import (
 	"fmt"
 	"math/big"
+    "encoding/binary"
+    "time"
+    "sort"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -28,6 +31,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/log"
 )
 
 // StateProcessor is a basic Processor, which takes care of transitioning
@@ -72,8 +76,50 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	}
 	blockContext := NewEVMBlockContext(header, p.bc, nil)
 	vmenv := vm.NewEVM(blockContext, vm.TxContext{}, statedb, p.config, cfg)
+
+    // Generate random permutation of transactions based on blockHash
+    start := time.Now()
+    numTransactions := uint64(0)
+    for range block.Transactions() {
+        numTransactions = numTransactions+1
+    }
+    transactionsByHash := make(types.TxByHash, numTransactions)
+    for i, tx := range block.Transactions() {
+        transactionsByHash[i] = tx
+    }
+    sort.Sort(transactionsByHash)
+    permutation := make([]int, numTransactions)
+    randomBytes := make([]byte, numTransactions)
+    for i := range permutation {
+        permutation[i] = i
+        randomBytes[i] = 1
+    }
+    nonceBytes := make([]byte, 8)
+    binary.BigEndian.PutUint64(nonceBytes, block.Nonce())
+    randomBytes = crypto.Keccak512(nonceBytes)
+    for i := range permutation {
+        randomNum := binary.BigEndian.Uint64(randomBytes) % numTransactions
+        permutation[i], permutation[randomNum] = permutation[randomNum], permutation[i]
+        randomBytes = crypto.Keccak512(randomBytes)
+    }
+    transactions := make([]types.Transaction, numTransactions)
+    // txNonces := make([]uint64, numTransactions)
+    for i, _ := range block.Transactions() {
+        // Keep original ordering
+        // transactions[i] = *tx
+        // Random ordering
+        transactions[permutation[i]] = *transactionsByHash[i]
+        // txNonces[i] = tx.nonce()
+    }
+    // sort.Ints(txNonces)
+    logger := log.Debug
+    logger("About to iterate over transactions", "transactions", numTransactions)
+
 	// Iterate over and process the individual transactions
-	for i, tx := range block.Transactions() {
+	for i, tx1 := range transactions {
+    // for i, tx := range block.Transactions() {
+        tx := &tx1
+        log.Debug(fmt.Sprintf("About to apply transaction %v", tx.Hash().Hex()))
 		msg, err := tx.AsMessage(types.MakeSigner(p.config, header.Number), header.BaseFee)
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
@@ -88,6 +134,8 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	}
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles())
+    elapsed := time.Since(start)
+    logger("Finished Process", "time-elapsed", elapsed)
 
 	return receipts, allLogs, *usedGas, nil
 }

@@ -221,13 +221,14 @@ func (st *StateTransition) preCheck() error {
 	if !st.msg.IsFake() {
 		// Make sure this transaction's nonce is correct.
 		stNonce := st.state.GetNonce(st.msg.From())
-		if msgNonce := st.msg.Nonce(); stNonce < msgNonce {
+		/*if msgNonce := st.msg.Nonce(); stNonce < msgNonce {
 			return fmt.Errorf("%w: address %v, tx: %d state: %d", ErrNonceTooHigh,
 				st.msg.From().Hex(), msgNonce, stNonce)
 		} else if stNonce > msgNonce {
 			return fmt.Errorf("%w: address %v, tx: %d state: %d", ErrNonceTooLow,
 				st.msg.From().Hex(), msgNonce, stNonce)
-		} else if stNonce+1 < stNonce {
+		} else */
+        if stNonce+1 < stNonce {
 			return fmt.Errorf("%w: address %v, nonce: %d", ErrNonceMax,
 				st.msg.From().Hex(), stNonce)
 		}

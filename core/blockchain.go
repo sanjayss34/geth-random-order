@@ -224,6 +224,7 @@ type BlockChain struct {
 // available in the database. It initialises the default Ethereum Validator
 // and Processor.
 func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis, overrides *ChainOverrides, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(header *types.Header) bool, txLookupLimit *uint64) (*BlockChain, error) {
+    log.Info("In blockchain.NewBlockChain")
 	if cacheConfig == nil {
 		cacheConfig = defaultCacheConfig
 	}
@@ -454,6 +455,7 @@ func (bc *BlockChain) empty() bool {
 // loadLastState loads the last known chain state from the database. This method
 // assumes that the chain manager mutex is held.
 func (bc *BlockChain) loadLastState() error {
+    log.Info("In blockchain.loadLastState")
 	// Restore the last known head block
 	head := rawdb.ReadHeadBlockHash(bc.db)
 	if head == (common.Hash{}) {
@@ -529,12 +531,14 @@ func (bc *BlockChain) loadLastState() error {
 // was fast synced or full synced and in which state, the method will try to
 // delete minimal data from disk whilst retaining chain consistency.
 func (bc *BlockChain) SetHead(head uint64) error {
+    log.Info("In blockchain.SetHead")
 	_, err := bc.setHeadBeyondRoot(head, common.Hash{}, false)
 	return err
 }
 
 // SetFinalized sets the finalized block.
 func (bc *BlockChain) SetFinalized(block *types.Block) {
+    log.Info("In SetFinalized")
 	bc.currentFinalizedBlock.Store(block)
 	if block != nil {
 		rawdb.WriteFinalizedBlockHash(bc.db, block.Hash())
@@ -564,6 +568,7 @@ func (bc *BlockChain) SetSafe(block *types.Block) {
 //
 // The method returns the block number where the requested root cap was found.
 func (bc *BlockChain) setHeadBeyondRoot(head uint64, root common.Hash, repair bool) (uint64, error) {
+    log.Info("In blockchain.setHeadBeyondRoot")
 	if !bc.chainmu.TryLock() {
 		return 0, errChainStopped
 	}
@@ -760,6 +765,7 @@ func (bc *BlockChain) Reset() error {
 // ResetWithGenesisBlock purges the entire blockchain, restoring it to the
 // specified genesis state.
 func (bc *BlockChain) ResetWithGenesisBlock(genesis *types.Block) error {
+    log.Info("In blockchain.ResetWithGenesisBlock")
 	// Dump the entire block chain and purge the caches
 	if err := bc.SetHead(0); err != nil {
 		return err
@@ -833,6 +839,7 @@ func (bc *BlockChain) ExportN(w io.Writer, first uint64, last uint64) error {
 //
 // Note, this function assumes that the `mu` mutex is held!
 func (bc *BlockChain) writeHeadBlock(block *types.Block) {
+    log.Info("In blockchain.writeHeadBlock")
 	// Add the block to the canonical chain number scheme and mark as the head
 	batch := bc.db.NewBatch()
 	rawdb.WriteHeadHeaderHash(batch, block.Hash())
@@ -954,18 +961,23 @@ func (bc *BlockChain) insertStopped() bool {
 }
 
 func (bc *BlockChain) procFutureBlocks() {
+    log.Info(fmt.Sprintf("In blockchain.procFutureBlocks %d", bc.futureBlocks.Len()))
 	blocks := make([]*types.Block, 0, bc.futureBlocks.Len())
 	for _, hash := range bc.futureBlocks.Keys() {
 		if block, exist := bc.futureBlocks.Peek(hash); exist {
 			blocks = append(blocks, block.(*types.Block))
 		}
+        _, exist := bc.futureBlocks.Peek(hash)
+        log.Info(fmt.Sprintf("%t", exist))
 	}
 	if len(blocks) > 0 {
+        log.Info("blockchain.procFutureBlocks: at least one block")
 		sort.Slice(blocks, func(i, j int) bool {
 			return blocks[i].NumberU64() < blocks[j].NumberU64()
 		})
 		// Insert one by one as chain insertion needs contiguous ancestry between blocks
 		for i := range blocks {
+            log.Info("blockchain.procFutureBlocks: calling InsertChain")
 			bc.InsertChain(blocks[i : i+1])
 		}
 	}
@@ -983,6 +995,7 @@ const (
 // InsertReceiptChain attempts to complete an already existing header chain with
 // transaction and receipt data.
 func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain []types.Receipts, ancientLimit uint64) (int, error) {
+    log.Info("In blockchain.InsertReceiptChain")
 	// We don't require the chainMu here since we want to maximize the
 	// concurrency of header insertion and receipt insertion.
 	bc.wg.Add(1)
@@ -1255,6 +1268,7 @@ var lastWrite uint64
 // but does not write any state. This is used to construct competing side forks
 // up to the point where they exceed the canonical total difficulty.
 func (bc *BlockChain) writeBlockWithoutState(block *types.Block, td *big.Int) (err error) {
+    log.Info("In blockchain.writeBlockWithoutState")
 	if bc.insertStopped() {
 		return errInsertionInterrupted
 	}
@@ -1271,6 +1285,7 @@ func (bc *BlockChain) writeBlockWithoutState(block *types.Block, td *big.Int) (e
 // writeKnownBlock updates the head block flag with a known block
 // and introduces chain reorg if necessary.
 func (bc *BlockChain) writeKnownBlock(block *types.Block) error {
+    log.Info("In blockchain.writeKnownBlock")
 	current := bc.CurrentBlock()
 	if block.ParentHash() != current.Hash() {
 		if err := bc.reorg(current, block); err != nil {
@@ -1284,6 +1299,7 @@ func (bc *BlockChain) writeKnownBlock(block *types.Block) error {
 // writeBlockWithState writes block, metadata and corresponding state data to the
 // database.
 func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.Receipt, state *state.StateDB) error {
+    log.Info("In blockchain.writeBlockWithState")
 	// Calculate the total difficulty of the block
 	ptd := bc.GetTd(block.ParentHash(), block.NumberU64()-1)
 	if ptd == nil {
@@ -1367,6 +1383,7 @@ func (bc *BlockChain) writeBlockWithState(block *types.Block, receipts []*types.
 // WriteBlockAndSetHead writes the given block and all associated state to the database,
 // and applies the block as the new chain head.
 func (bc *BlockChain) WriteBlockAndSetHead(block *types.Block, receipts []*types.Receipt, logs []*types.Log, state *state.StateDB, emitHeadEvent bool) (status WriteStatus, err error) {
+    log.Info("In blockchain.WriteBlockAndSetHead")
 	if !bc.chainmu.TryLock() {
 		return NonStatTy, errChainStopped
 	}
@@ -1378,6 +1395,7 @@ func (bc *BlockChain) WriteBlockAndSetHead(block *types.Block, receipts []*types
 // writeBlockAndSetHead is the internal implementation of WriteBlockAndSetHead.
 // This function expects the chain mutex to be held.
 func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types.Receipt, logs []*types.Log, state *state.StateDB, emitHeadEvent bool) (status WriteStatus, err error) {
+    log.Info("In blockchain.writeBlockAndSetHead")
 	if err := bc.writeBlockWithState(block, receipts, state); err != nil {
 		return NonStatTy, err
 	}
@@ -1429,6 +1447,7 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 // TODO after the transition, the future block shouldn't be kept. Because
 // it's not checked in the Geth side anymore.
 func (bc *BlockChain) addFutureBlock(block *types.Block) error {
+    log.Info("In blockchain.addFutureBlock")
 	max := uint64(time.Now().Unix() + maxTimeFutureBlocks)
 	if block.Time() > max {
 		return fmt.Errorf("future block timestamp %v > allowed %v", block.Time(), max)
@@ -1446,6 +1465,7 @@ func (bc *BlockChain) addFutureBlock(block *types.Block) error {
 // the index number of the failing block as well an error describing what went
 // wrong. After insertion is done, all accumulated events will be fired.
 func (bc *BlockChain) InsertChain(chain types.Blocks) (int, error) {
+    log.Info("In blockchain.InsertChain")
 	// Sanity check that we have something meaningful to import
 	if len(chain) == 0 {
 		return 0, nil
@@ -1489,6 +1509,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 	if bc.insertStopped() {
 		return 0, nil
 	}
+    log.Info("In blockchain.insertChain")
 
 	// Start a parallel signature recovery (signer will fluke on fork transition, minimal perf loss)
 	SenderCacher.RecoverFromBlocks(types.MakeSigner(bc.chainConfig, chain[0].Number()), chain)
@@ -1532,9 +1553,11 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 		for block != nil && bc.skipBlock(err, it) {
 			reorg, err = bc.forker.ReorgNeeded(current.Header(), block.Header())
 			if err != nil {
+                log.Debug("skipBlock 1")
 				return it.index, err
 			}
 			if reorg {
+                log.Debug("skipBlock 2")
 				// Switch to import mode if the forker says the reorg is necessary
 				// and also the block is not on the canonical chain.
 				// In eth2 the forker always returns true for reorg decision (blindly trusting
@@ -1623,11 +1646,14 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 			log.Debug("Abort during block processing")
 			break
 		}
+        log.Info("In blockchain block processing loop")
 		// If the header is a banned one, straight out abort
 		if BadHashes[block.Hash()] {
 			bc.reportBlock(block, nil, ErrBannedHash)
+            log.Debug("bad hash")
 			return it.index, ErrBannedHash
 		}
+        log.Debug("Before skipBlock")
 		// If the block is known (in the middle of the chain), it's a special case for
 		// Clique blocks where they can share state among each other, so importing an
 		// older block might complete the state of the subsequent one. In this case,
@@ -1667,6 +1693,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 			lastCanon = block
 			continue
 		}
+        log.Debug("After skipBlock")
 
 		// Retrieve the parent block and it's state to execute on top
 		start := time.Now()
@@ -1824,6 +1851,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals, setHead bool)
 // switch over to the new chain if the TD exceeded the current chain.
 // insertSideChain is only used pre-merge.
 func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (int, error) {
+    log.Info("In blockchain.insertSideChain")
 	var (
 		externTd  *big.Int
 		lastBlock = block
@@ -1951,6 +1979,7 @@ func (bc *BlockChain) insertSideChain(block *types.Block, it *insertIterator) (i
 // recoverAncestors is only used post-merge.
 // We return the hash of the latest block that we could correctly validate.
 func (bc *BlockChain) recoverAncestors(block *types.Block) (common.Hash, error) {
+    log.Info("In blockchain.recoverAncestors")
 	// Gather all the sidechain hashes (full blocks may be memory heavy)
 	var (
 		hashes  []common.Hash
@@ -1995,6 +2024,7 @@ func (bc *BlockChain) recoverAncestors(block *types.Block) (common.Hash, error) 
 // the processing of the block that corresponds with the given hash.
 // These logs are later announced as deleted or reborn.
 func (bc *BlockChain) collectLogs(hash common.Hash, removed bool) []*types.Log {
+    log.Info("In blockchain.collectLogs")
 	number := bc.hc.GetBlockNumber(hash)
 	if number == nil {
 		return nil
@@ -2181,6 +2211,7 @@ func (bc *BlockChain) reorg(oldBlock, newBlock *types.Block) error {
 // updating. It relies on the additional SetCanonical call to finalize the entire
 // procedure.
 func (bc *BlockChain) InsertBlockWithoutSetHead(block *types.Block) error {
+    log.Info("In blockchain.InsertBlockWithoutSetHead")
 	if !bc.chainmu.TryLock() {
 		return errChainStopped
 	}
@@ -2194,6 +2225,7 @@ func (bc *BlockChain) InsertBlockWithoutSetHead(block *types.Block) error {
 // block. It's possible that the state of the new head is missing, and it will
 // be recovered in this function as well.
 func (bc *BlockChain) SetCanonical(head *types.Block) (common.Hash, error) {
+    log.Info("In blockchain.SetCanonical")
 	if !bc.chainmu.TryLock() {
 		return common.Hash{}, errChainStopped
 	}
@@ -2237,6 +2269,7 @@ func (bc *BlockChain) SetCanonical(head *types.Block) (common.Hash, error) {
 }
 
 func (bc *BlockChain) updateFutureBlocks() {
+    log.Info("In blockchain.updateFutureBlocks")
 	futureTimer := time.NewTicker(5 * time.Second)
 	defer futureTimer.Stop()
 	defer bc.wg.Done()
@@ -2253,6 +2286,7 @@ func (bc *BlockChain) updateFutureBlocks() {
 // skipBlock returns 'true', if the block being imported can be skipped over, meaning
 // that the block does not need to be processed but can be considered already fully 'done'.
 func (bc *BlockChain) skipBlock(err error, it *insertIterator) bool {
+    log.Info("In blockchain.skipBlock")
 	// We can only ever bypass processing if the only error returned by the validator
 	// is ErrKnownBlock, which means all checks passed, but we already have the block
 	// and state.
@@ -2412,6 +2446,7 @@ Receipts: %v
 // of the header retrieval mechanisms already need to verify nonces, as well as
 // because nonces can be verified sparsely, not needing to check each.
 func (bc *BlockChain) InsertHeaderChain(chain []*types.Header, checkFreq int) (int, error) {
+    log.Info("In blockchain.InsertHeaderChain")
 	if len(chain) == 0 {
 		return 0, nil
 	}

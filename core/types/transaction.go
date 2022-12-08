@@ -464,6 +464,13 @@ func (s TxByNonce) Len() int           { return len(s) }
 func (s TxByNonce) Less(i, j int) bool { return s[i].Nonce() < s[j].Nonce() }
 func (s TxByNonce) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
+// TxByHash implements the sort interface to allow sorting by Hash
+type TxByHash Transactions
+
+func (s TxByHash) Len() int            { return len(s) }
+func (s TxByHash) Less(i, j int) bool  { return s[i].Hash().Hex() < s[j].Hash().Hex() }
+func (s TxByHash) Swap(i, j int)       { s[i], s[j] = s[j], s[i] }
+
 // TxWithMinerFee wraps a transaction with its gas price or effective miner gasTipCap
 type TxWithMinerFee struct {
 	tx       *Transaction

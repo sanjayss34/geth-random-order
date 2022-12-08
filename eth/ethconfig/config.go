@@ -217,7 +217,9 @@ type Config struct {
 func CreateConsensusEngine(stack *node.Node, ethashConfig *ethash.Config, cliqueConfig *params.CliqueConfig, notify []string, noverify bool, db ethdb.Database) consensus.Engine {
 	// If proof-of-authority is requested, set it up
 	var engine consensus.Engine
+    log.Info("Creating Consensus Engine")
 	if cliqueConfig != nil {
+        log.Warn("Proof-of-authority used")
 		engine = clique.New(cliqueConfig, db)
 	} else {
 		switch ethashConfig.PowMode {
@@ -227,7 +229,9 @@ func CreateConsensusEngine(stack *node.Node, ethashConfig *ethash.Config, clique
 			log.Warn("Ethash used in test mode")
 		case ethash.ModeShared:
 			log.Warn("Ethash used in shared mode")
-		}
+        case ethash.ModeNormal:
+            log.Warn("Ethash used in normal mode")
+        }
 		engine = ethash.New(ethash.Config{
 			PowMode:          ethashConfig.PowMode,
 			CacheDir:         stack.ResolvePath(ethashConfig.CacheDir),
