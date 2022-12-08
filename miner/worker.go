@@ -716,14 +716,8 @@ func (w *worker) resultLoop() {
 			if block == nil {
 				continue
 			}
-			// Short circuit when receiving duplicate result caused by resubmitting.
-			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
-				continue
-			}
-			var (
-				sealhash = w.engine.SealHash(block.Header())
-				hash     = block.Hash()
-			)
+
+			var sealhash = w.engine.SealHash(block.Header())
 			w.pendingMu.RLock()
 			task, exist := w.pendingTasks[sealhash]
 			w.pendingMu.RUnlock()
@@ -731,7 +725,14 @@ func (w *worker) resultLoop() {
 				log.Error("Block found but no relative pending task", "number", block.Number(), "sealhash", sealhash, "hash", hash)
 				continue
 			}
-            numTransactions := uint64(0)
+			
+			// Execute Transactions for real
+			var (
+				receipts = make([]*types.Receipt, numTransactions)
+				logs     []*types.Log
+			)
+
+			numTransactions := uint64(0)
             for range block.Transactions() {
                 numTransactions = numTransactions+1
             }
@@ -764,28 +765,41 @@ func (w *worker) resultLoop() {
                 transactions[permutation[i]] = *transactionsByHash[i]
                 // txNonces[i] = tx.nonce()
             }
-            statedb := task.state
-			// Different block could share same sealhash, deep copy here to prevent write-write conflict.
-			var (
-				receipts = make([]*types.Receipt, numTransactions)
-				logs     []*types.Log
-			)
-            for i, tx1 := range transactions {
-                tx := &tx1
-                statedb.Prepare(tx.Hash(), i)
-                snap := statedb.Snapshot()
-                taskReceipt, err := core.ApplyTransaction(w.chainConfig, w.chain, &task.coinbase, task.gasPool, statedb, task.header, tx, &task.header.GasUsed, *w.chain.GetVMConfig())
+
+			var coalescedLogs []*types.Log
+
+			for i, tx1 := range transactions {
+				// Start executing the transactio        
+				tx := &tx1
+                task.state.Prepare(tx.Hash(), i)
+                snap := task.state.Snapshot()
+                taskReceipt, err := core.ApplyTransaction(w.chainConfig, w.chain, &task.coinbase, task.gasPool, task.state, task.header, tx, &task.header.GasUsed, *w.chain.GetVMConfig())
                 if err != nil {
                     log.Debug("Error occurred during ApplyTransaction", "err", err)
-                    statedb.RevertToSnapshot(snap)
+                    task.state.RevertToSnapshot(snap)
                     receipts[i] = nil
                     logs = append(logs, nil)
                 }
                 log.Debug("Executed transaction", "txId", i)
-				receipt := new(types.Receipt)
-				receipts[i] = receipt
-				*receipt = *taskReceipt
+				
 
+            // statedb := task.state
+
+			block, err := w.engine.FinalizeAndAssemble(w.chain, block.header, task.state, block.txs, block.uncles, receipts)
+			if err != nil {
+				log.Debug("Error occurred during FinalizeAndAssemble", "err", err)
+				continue
+			}	
+
+			// Short circuit when receiving duplicate result caused by resubmitting.
+			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
+				continue
+			}
+
+			var hash     = block.Hash()
+
+			// Different block could share same sealhash, deep copy here to prevent write-write conflict.
+            for i, receipt := range receipts {
 				// add block location fields
 				receipt.BlockHash = hash
 				receipt.BlockNumber = block.Number()
@@ -793,13 +807,6 @@ func (w *worker) resultLoop() {
 
 				// Update the block hash in all logs since it is now available and not when the
 				// receipt/log of individual transactions were created.
-				receipt.Logs = make([]*types.Log, len(taskReceipt.Logs))
-				for i, taskLog := range taskReceipt.Logs {
-					log := new(types.Log)
-					receipt.Logs[i] = log
-					*log = *taskLog
-					log.BlockHash = hash
-				}
 				logs = append(logs, receipt.Logs...)
 			}
 			// Commit block and state to database.
@@ -1299,10 +1306,12 @@ func (w *worker) commit(env *environment, interval func(), update bool, start ti
 		// Create a local environment copy, avoid the data race with snapshot state.
 		// https://github.com/ethereum/go-ethereum/issues/24299
 		env := env.copy()
-		block, err := w.engine.FinalizeAndAssemble(w.chain, env.header, env.state, env.txs, env.unclelist(), env.receipts)
-		if err != nil {
-			return err
-		}
+		// Finalize later
+		// block, err := w.engine.FinalizeAndAssemble(w.chain, env.header, env.state, env.txs, env.unclelist(), env.receipts)
+		block = types.NewBlock(env.header, env.txs, env.unclelist(), env.receipts, trie.NewStackTrie(nil))
+		// if err != nil {
+		//	return err
+		//}
         numTx := 0
         for i, _ := range block.Transactions() {
             numTx = numTx + ((i+1)/(i+1))
