@@ -784,12 +784,8 @@ func (w *worker) resultLoop() {
             }		
 
             // statedb := task.state
-
-			block, err := w.engine.FinalizeAndAssemble(w.chain, block.Header(), task.state, block.Transactions(), block.Uncles(), receipts)
-			if err != nil {
-				log.Debug("Error occurred during FinalizeAndAssemble", "err", err)
-				continue
-			}	
+			
+			w.engine.Finalize(w.chain, block.Header(), task.state, block.Transactions(), block.Uncles())
 
 			// Short circuit when receiving duplicate result caused by resubmitting.
 			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
