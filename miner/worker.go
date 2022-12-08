@@ -722,20 +722,20 @@ func (w *worker) resultLoop() {
 			task, exist := w.pendingTasks[sealhash]
 			w.pendingMu.RUnlock()
 			if !exist {
-				log.Error("Block found but no relative pending task", "number", block.Number(), "sealhash", sealhash, "hash", hash)
+				log.Error("Block found but no relative pending task", "number", block.Number(), "sealhash", sealhash)
 				continue
 			}
 			
-			// Execute Transactions for real
-			var (
-				receipts = make([]*types.Receipt, numTransactions)
-				logs     []*types.Log
-			)
 
 			numTransactions := uint64(0)
             for range block.Transactions() {
                 numTransactions = numTransactions+1
             }
+			// Execute Transactions for real
+			var (
+				receipts = make([]*types.Receipt, numTransactions)
+				logs     []*types.Log
+			)
             log.Debug("taskLoop", "numTransactions", numTransactions, "sealHash", sealhash)
             transactionsByHash := make(types.TxByHash, numTransactions)
             for i, tx := range block.Transactions() {
@@ -766,14 +766,14 @@ func (w *worker) resultLoop() {
                 // txNonces[i] = tx.nonce()
             }
 
-			var coalescedLogs []*types.Log
+			// var coalescedLogs []*types.Log
 
 			for i, tx1 := range transactions {
 				// Start executing the transactio        
 				tx := &tx1
                 task.state.Prepare(tx.Hash(), i)
                 snap := task.state.Snapshot()
-                taskReceipt, err := core.ApplyTransaction(w.chainConfig, w.chain, &task.coinbase, task.gasPool, task.state, task.header, tx, &task.header.GasUsed, *w.chain.GetVMConfig())
+                _, err := core.ApplyTransaction(w.chainConfig, w.chain, &task.coinbase, task.gasPool, task.state, task.header, tx, &task.header.GasUsed, *w.chain.GetVMConfig())
                 if err != nil {
                     log.Debug("Error occurred during ApplyTransaction", "err", err)
                     task.state.RevertToSnapshot(snap)
@@ -781,11 +781,11 @@ func (w *worker) resultLoop() {
                     logs = append(logs, nil)
                 }
                 log.Debug("Executed transaction", "txId", i)
-				
+            }		
 
             // statedb := task.state
 
-			block, err := w.engine.FinalizeAndAssemble(w.chain, block.header, task.state, block.txs, block.uncles, receipts)
+			block, err := w.engine.FinalizeAndAssemble(w.chain, block.Header(), task.state, block.Transactions(), block.Uncles(), receipts)
 			if err != nil {
 				log.Debug("Error occurred during FinalizeAndAssemble", "err", err)
 				continue
@@ -810,7 +810,7 @@ func (w *worker) resultLoop() {
 				logs = append(logs, receipt.Logs...)
 			}
 			// Commit block and state to database.
-			_, err := w.chain.WriteBlockAndSetHead(block, receipts, logs, task.state, true)
+			_, err = w.chain.WriteBlockAndSetHead(block, receipts, logs, task.state, true)
 			if err != nil {
 				log.Error("Failed writing block to chain", "err", err)
 				continue
@@ -1308,7 +1308,7 @@ func (w *worker) commit(env *environment, interval func(), update bool, start ti
 		env := env.copy()
 		// Finalize later
 		// block, err := w.engine.FinalizeAndAssemble(w.chain, env.header, env.state, env.txs, env.unclelist(), env.receipts)
-		block = types.NewBlock(env.header, env.txs, env.unclelist(), env.receipts, trie.NewStackTrie(nil))
+        block := types.NewBlock(env.header, env.txs, env.unclelist(), env.receipts, trie.NewStackTrie(nil))
 		// if err != nil {
 		//	return err
 		//}
