@@ -1,5 +1,5 @@
 ## Random ordering implementation
-
+`master` has our attempt at implementing random ordering on both the miner and the client node sides, `only-random-client` has our implementation of random ordering on only the client side, and `baseline2` has the baseline implementation of the protocol without modifications (other than for writing output files that we use in our timing experiment).
 ### Setup instructions
 1. Install golang (https://go.dev/doc/install).
 2. Follow instructions below to build the source (i.e. `make geth`).
