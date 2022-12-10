@@ -1,3 +1,19 @@
+## Random ordering implementation
+
+### Setup instructions
+1. Install golang (https://go.dev/doc/install).
+2. Follow instructions below to build the source (i.e. `make geth`).
+3. In terminal session 1, keep this process running:
+```./build/bin/bootnode -nodekey boot.key -verbosity 9 -addr :30310```
+4. Run ./build/bin/geth --datadir node1/ init glens.json
+5. Run ./build/bin/geth --datadir node2/ init glens.json
+6. In terminal session 2 (miner), run something like this (replace enode:... with what appears when you start the bootnode):
+```./build/bin/geth -datadir node1/ -syncmode 'full' -port 30311 --http --http.addr 'localhost' --http.port 8501 --http.api 'personal,db,eth,net,web3,txpool,miner' --bootnodes 'enode://e1528f6dddb29b4d433713aa53e1ab6ab7756b37a0606d365b4d3fbe2c5bb24e72041930cdc49f1a355c9502c818f0054c8f2693307adca29c72fff7654379db@127.0.0.1:0?discport=30310' -networkid 1515 -miner.gasprice '1' -unlock '0xf756a7d853d5d1f7a74b5747490379b29b11e2f2' -password node1/account1_password.txt --allow-insecure-unlock --verbosity 4 console ```
+7. In terminal session 2, in the console, run miner.start(1)
+8. In terminal session 3 (client node), run something like this (replace enode:... with what appears when you start the bootnode):
+```./build/bin/geth -datadir node2/ -syncmode 'full' -port 30312 -http -http.api 'personal,db,eth,net,web3,txpool,miner' -http.addr 'localhost' -authrpc.port 8502 -bootnodes 'enode://e1528f6dddb29b4d433713aa53e1ab6ab7756b37a0606d365b4d3fbe2c5bb24e72041930cdc49f1a355c9502c818f0054c8f2693307adca29c72fff7654379db@127.0.0.1:0?discport=30310' -networkid 1515 -miner.gasprice '1' -unlock '0x8dd07043fb4e6237dc06abd42545527e3f828126' -password node2/account2_password.txt --allow-insecure-unlock --verbosity 4```
+9. In terminal session 4 (for inserting transactions), run `python insert_transactions.py 1000` to insert 1000 transactions.
+
 ## Go Ethereum
 
 Official Golang execution layer implementation of the Ethereum protocol.
