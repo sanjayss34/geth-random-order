@@ -773,19 +773,26 @@ func (w *worker) resultLoop() {
 				tx := &tx1
                 task.state.Prepare(tx.Hash(), i)
                 snap := task.state.Snapshot()
-                _, err := core.ApplyTransaction(w.chainConfig, w.chain, &task.coinbase, task.gasPool, task.state, task.header, tx, &task.header.GasUsed, *w.chain.GetVMConfig())
+                receipt, err := core.ApplyTransaction(w.chainConfig, w.chain, &task.coinbase, task.gasPool, task.state, task.header, tx, &task.header.GasUsed, *w.chain.GetVMConfig())
                 if err != nil {
                     log.Debug("Error occurred during ApplyTransaction", "err", err)
                     task.state.RevertToSnapshot(snap)
                     receipts[i] = nil
                     logs = append(logs, nil)
                 }
+                receipts[i] = receipt
                 log.Debug("Executed transaction", "txId", i)
             }		
 
             // statedb := task.state
-			
-			w.engine.Finalize(w.chain, block.Header(), task.state, block.Transactions(), block.Uncles())
+	
+            newHeader := types.CopyHeader(block.Header())
+            newHeader.GasUsed = task.header.GasUsed
+            block, finalizeErr := w.engine.FinalizeAndAssemble(w.chain, newHeader, task.state, block.Transactions(), block.Uncles(), receipts)
+            if finalizeErr != nil {
+                log.Error("FinalizeAndAssemble error", "err", finalizeErr)
+            }
+            // block = finalizedBlock.WithSeal(types.CopyHeader(block.Header()))
 
 			// Short circuit when receiving duplicate result caused by resubmitting.
 			if w.chain.HasBlock(block.Hash(), block.NumberU64()) {
@@ -1313,7 +1320,7 @@ func (w *worker) commit(env *environment, interval func(), update bool, start ti
         for i, _ := range block.Transactions() {
             numTx = numTx + ((i+1)/(i+1))
         }
-        log.Debug("commit after FinalizeAndAssemble", "txCount", env.tcount, "blockTxCount", numTx)
+        log.Debug("commit after NewBlock", "txCount", env.tcount, "blockTxCount", numTx)
 		// If we're post merge, just ignore
 		if !w.isTTDReached(block.Header()) {
 			select {
