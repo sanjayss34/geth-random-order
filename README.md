@@ -1,5 +1,5 @@
 ## Random ordering implementation
-`master` has our attempt at implementing random ordering on both the miner and the client node sides, `only-random-client` has our implementation of random ordering on only the client side, and `baseline2` has the baseline implementation of the protocol without modifications (other than for writing output files that we use in our timing experiment).
+`master` has our implemention of random ordering on both the miner and the client node sides. `baseline2` has the baseline implementation of the protocol without modifications (other than for writing output files that we use in our timing experiment and some logging).
 ### Setup instructions
 1. Install golang (https://go.dev/doc/install).
 2. Follow instructions below to build the source (i.e. `make geth`).
@@ -12,7 +12,7 @@
 7. In terminal session 2, in the console, run miner.start(1)
 8. In terminal session 3 (client node), run something like this (replace enode:... with what appears when you start the bootnode):
 ```./build/bin/geth -datadir node2/ -syncmode 'full' -port 30312 -http -http.api 'personal,db,eth,net,web3,txpool,miner' -http.addr 'localhost' -authrpc.port 8502 -bootnodes 'enode://e1528f6dddb29b4d433713aa53e1ab6ab7756b37a0606d365b4d3fbe2c5bb24e72041930cdc49f1a355c9502c818f0054c8f2693307adca29c72fff7654379db@127.0.0.1:0?discport=30310' -networkid 1515 -miner.gasprice '1' -unlock '0x8dd07043fb4e6237dc06abd42545527e3f828126' -password node2/account2_password.txt --allow-insecure-unlock --verbosity 4```
-9. In terminal session 4 (for inserting transactions), run `python insert_transactions.py 1000` to insert 1000 transactions.
+9. In terminal session 4 (for inserting transactions), run `python insert_transactions.py 10000` to insert 10000 transactions.
 
 ## Go Ethereum
 
