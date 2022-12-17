@@ -136,7 +136,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
 	p.engine.Finalize(p.bc, header, statedb, block.Transactions(), block.Uncles())
     elapsed := time.Since(start)
-    f, err := os.Create(fmt.Sprintf("state_processor_random_out2/%v.txt", blockHash.Hex()))
+    f, err := os.Create(fmt.Sprintf("state_processor_random_out3/%v.txt", blockHash.Hex()))
     if err != nil {
         fmt.Printf("Error creating file: %v", err)
     }

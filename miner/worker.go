@@ -781,7 +781,7 @@ func (w *worker) resultLoop() {
                     logs = append(logs, nil)
                 }
                 receipts[i] = receipt
-                log.Debug("Executed transaction", "txId", i)
+                log.Debug("Executed transaction", "txId", i, "txHash", tx.Hash().Hex())
             }		
 
             // statedb := task.state
